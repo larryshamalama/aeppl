@@ -2,9 +2,12 @@ from typing import List, Optional, Union
 
 import aesara
 from aesara import tensor as at
+from aesara.graph.fg import FunctionGraph
 from aesara.graph.op import compute_test_value
 from aesara.graph.opt import local_optimizer
+from aesara.graph.opt_utils import optimize_graph
 from aesara.tensor.basic import Join, MakeVector
+from aesara.tensor.basic_opt import ShapeFeature, topo_constant_folding
 from aesara.tensor.extra_ops import BroadcastTo
 from aesara.tensor.random.op import RandomVariable
 from aesara.tensor.random.opt import local_dimshuffle_rv_lift, local_rv_size_lift
@@ -109,9 +112,21 @@ def logprob_join(op, values, axis, *base_vars, **kwargs):
     """Compute the log-likelihood graph for a `Join`."""
     (value,) = values
 
+    # constant folding removes random variables from the graph
+    # which were present due to shape inference
+    base_var_shapes_fg = FunctionGraph(
+        outputs=[base_var.shape[axis] for base_var in base_vars],
+        features=[ShapeFeature()],
+        clone=True,
+    )
+
+    folded_shapes = optimize_graph(
+        base_var_shapes_fg, custom_opt=topo_constant_folding
+    ).outputs
+
     split_values = at.split(
         value,
-        splits_size=[base_var.shape[axis] for base_var in base_vars],
+        splits_size=folded_shapes,
         n_splits=len(base_vars),
         axis=axis,
     )
